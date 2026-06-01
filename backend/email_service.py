@@ -1,29 +1,12 @@
 import html
 import logging
-
-from fastapi_mail import ConnectionConfig, FastMail, MessageSchema, MessageType
-
-from config import get_mail_settings
+import os
+import resend
 
 logger = logging.getLogger(__name__)
 
-
-def _connection_config() -> ConnectionConfig:
-    """Build SMTP config from backend/.env (Gmail-compatible defaults)."""
-    mail = get_mail_settings()
-
-    return ConnectionConfig(
-        MAIL_USERNAME=mail["username"],
-        MAIL_PASSWORD=mail["password"],
-        MAIL_FROM=mail["mail_from"],
-        MAIL_PORT=mail["mail_port"],
-        MAIL_SERVER=mail["mail_server"],
-        MAIL_STARTTLS=mail["starttls"],
-        MAIL_SSL_TLS=mail["ssl_tls"],
-        USE_CREDENTIALS=True,
-        VALIDATE_CERTS=True,
-    )
-
+# Grab the API key from Render's environment variables
+resend.api_key = os.environ.get("RESEND_API_KEY")
 
 def build_voucher_html(
     *,
@@ -115,7 +98,6 @@ def build_voucher_html(
 </body>
 </html>"""
 
-
 async def send_gift_voucher_email(
     *,
     recipient_email: str,
@@ -127,7 +109,7 @@ async def send_gift_voucher_email(
     personal_message: str,
     theme_color: str,
 ) -> None:
-    html = build_voucher_html(
+    html_content = build_voucher_html(
         recipient_name=recipient_name,
         sender_name=sender_name,
         brand_name=brand_name,
@@ -137,13 +119,16 @@ async def send_gift_voucher_email(
         theme_color=theme_color,
     )
 
-    message = MessageSchema(
-        subject=f"{sender_name} sent you a {brand_name} gift card",
-        recipients=[recipient_email],
-        body=html,
-        subtype=MessageType.html,
-    )
+    # Resend requires using their sandbox domain on the free tier
+    sender = "onboarding@resend.dev"
 
-    mail = FastMail(_connection_config())
-    await mail.send_message(message)
-    logger.info("Gift voucher email queued for %s (code %s)", recipient_email, gift_code)
+    try:
+        response = resend.Emails.send({
+            "from": sender,
+            "to": recipient_email, # Must be your verified GitHub/Resend email for this demo
+            "subject": f"{sender_name} sent you a {brand_name} gift card",
+            "html": html_content
+        })
+        logger.info("Gift voucher email sent via Resend for %s (code %s): %s", recipient_email, gift_code, response)
+    except Exception as e:
+        logger.error("Failed to send email via Resend: %s", e)
